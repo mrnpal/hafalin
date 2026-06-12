@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from "react";
-import { supabase } from "@/lib/supabase"; // <-- KONEKSI SUPABASE DARI FASE 2
+import { supabase } from "@/lib/supabase"; 
 import {
   Home, BookOpen, Eye, PenLine, Plus, ChevronRight, Trash2,
   Clock, Sparkles, X, RefreshCw, CheckCircle, Send,
