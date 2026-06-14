@@ -6,7 +6,7 @@ import {
   Home, BookOpen, Eye, PenLine, Plus, ChevronRight, Trash2,
   Clock, X, RefreshCw, CheckCircle, Send,
   Bell, ChevronDown, ChevronUp, Loader, MessageCircle,
-  Flame, Play, Square, Heart, Gift, Lock, Calendar, Dices
+  Flame, Play, Square, Heart, Gift, Lock, Calendar, Dices, Phone // <-- Tambahan Phone Icon
 } from "lucide-react";
 
 // ─── CONSTANTS ──────────────────────────────────────────────────────────────
@@ -51,10 +51,14 @@ export default function HafalIn() {
   const [syncing, setSyncing] = useState(false);
   const [quoteIdx, setQuoteIdx] = useState(0);
 
-  // Fitur Streak & Progress Total
+  // Fitur Streak & Progress Total 
   const [streak, setStreak] = useState(0);
   const totalReviews = hafalan.reduce((acc, curr) => acc + (curr.reviewCount || 0), 0);
   const [heatmap, setHeatmap] = useState<Record<string, number>>({});
+
+  // FITUR 3: Surat Tilang (Lock Screen)
+  const [isLocked, setIsLocked] = useState(false);
+  const [tilangPass, setTilangPass] = useState("");
 
   // Fitur Audio Murottal
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -90,6 +94,9 @@ export default function HafalIn() {
   const [expandedJ, setExpandedJ] = useState<string | null>(null);
   const [replyTxt, setReplyTxt] = useState("");
 
+  const [surprise, setSurprise] = useState<string | null>(null);
+  const [sprVis, setSprVis] = useState(false);
+
   const [notifPerm, setNotifPerm] = useState("default");
 
   const T="#3D3250", TM="#9B8FAD", C="#C97AB5", CS="#5AA88C", CA="#E8A020";
@@ -103,25 +110,6 @@ export default function HafalIn() {
 
     if (typeof window !== 'undefined') {
       try { setNotifPerm(Notification.permission); } catch {}
-      
-      const today = new Date().toISOString().split('T')[0];
-      const stored = JSON.parse(localStorage.getItem('hafalin-streak') || '{"count": 0, "lastDate": ""}');
-      
-      if (stored.lastDate === today) {
-        setStreak(stored.count);
-      } else {
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        if (stored.lastDate === yesterday.toISOString().split('T')[0]) {
-          setStreak(stored.count);
-        } else {
-          setStreak(0);
-          localStorage.setItem('hafalin-streak', JSON.stringify({ count: 0, lastDate: "" }));
-        }
-      }
-
-      const storedHeatmap = JSON.parse(localStorage.getItem('hafalin-heatmap') || '{}');
-      setHeatmap(storedHeatmap);
     }
   }, []);
 
@@ -135,30 +123,87 @@ export default function HafalIn() {
 
   const loadSurahs = async () => { try { setSurahs(await qGetSurahs()); } catch {} };
 
+  // FUNGSI LOAD ALL SEKALIGUS NGECEK TILANG KANGEN
   const loadAll = async () => {
     setSyncing(true);
     try {
       const { data: hData } = await supabase.from('hafalans').select('*').order('nextReview', { ascending: true });
       const { data: jData } = await supabase.from('journals').select('*').order('date', { ascending: false });
+      const { data: sData } = await supabase.from('user_stats').select('*').eq('id', 1).single();
+
       if (hData) setHafalan(hData);
       if (jData) setJournal(jData);
-    } catch (e) { console.error(e); }
+
+      const today = new Date().toISOString().split('T')[0];
+
+      if (sData) {
+        let currStreak = sData.streak_count || 0;
+        const lastDate = sData.last_streak_date || "";
+        let currHeatmap = sData.heatmap_data || {};
+
+        if (lastDate !== today && lastDate !== "") {
+          const last = new Date(lastDate);
+          const now = new Date();
+          const diffTime = Math.abs(now.getTime() - last.getTime());
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          
+          const yesterday = new Date();
+          yesterday.setDate(yesterday.getDate() - 1);
+          
+          if (lastDate !== yesterday.toISOString().split('T')[0]) {
+            currStreak = 0; 
+            await supabase.from('user_stats').update({ streak_count: 0 }).eq('id', 1);
+          }
+
+          // Cekik Tilang Kangen (bolos >= 3 hari)
+          const unlockedDate = localStorage.getItem('hafalin-unlocked');
+          if (diffDays >= 3 && unlockedDate !== today) {
+            setIsLocked(true);
+          }
+        }
+        setStreak(currStreak);
+        setHeatmap(currHeatmap);
+      } else {
+        await supabase.from('user_stats').insert([{ id: 1, streak_count: 0, last_streak_date: "", heatmap_data: {} }]);
+      }
+    } catch (e) { console.error("Error Load:", e); }
     setSyncing(false);
   };
 
-  const updateStreakAndHeatmap = () => {
+  const updateStreakAndHeatmap = async () => {
     const today = new Date().toISOString().split('T')[0];
-    const stored = JSON.parse(localStorage.getItem('hafalin-streak') || '{"count": 0, "lastDate": ""}');
-    if (stored.lastDate !== today) {
-      const newStreak = stored.count + 1;
-      setStreak(newStreak);
-      localStorage.setItem('hafalin-streak', JSON.stringify({ count: newStreak, lastDate: today }));
-    }
+    try {
+      const { data: sData } = await supabase.from('user_stats').select('*').eq('id', 1).single();
+      if (sData) {
+        let newStreak = sData.streak_count || 0;
+        let newHeatmap = sData.heatmap_data || {};
+        
+        if (sData.last_streak_date !== today) {
+          newStreak += 1;
+        }
+        
+        newHeatmap[today] = (newHeatmap[today] || 0) + 1;
+        
+        await supabase.from('user_stats').update({
+          streak_count: newStreak,
+          last_streak_date: today,
+          heatmap_data: newHeatmap
+        }).eq('id', 1);
 
-    const currentHeatmap = { ...heatmap };
-    currentHeatmap[today] = (currentHeatmap[today] || 0) + 1;
-    setHeatmap(currentHeatmap);
-    localStorage.setItem('hafalin-heatmap', JSON.stringify(currentHeatmap));
+        setStreak(newStreak);
+        setHeatmap(newHeatmap);
+      }
+    } catch (e) { console.error("Error Update Stats:", e); }
+  };
+
+  const unlockApp = () => {
+    // Password Rahasianya di sini!
+    if (tilangPass.toUpperCase() === "KANGENUSTAD") {
+      setIsLocked(false);
+      localStorage.setItem('hafalin-unlocked', new Date().toISOString().split('T')[0]);
+    } else {
+      alert("Password salah 😜! Hayo, chat komandan dulu sana buat minta passwordnya!");
+    }
   };
 
   const fetchArabic = async () => {
@@ -209,19 +254,18 @@ export default function HafalIn() {
     await loadAll();
   };
 
-  // Logika Memicu Prank "Tombol Kabur"
   const handleReviewClick = (q: number) => {
     if (q === 0) {
       setShowPrank(true);
-      setPrankPos({ top: 0, left: 0 }); // Reset posisi pas popup muncul
+      setPrankPos({ top: 0, left: 0 }); 
     } else {
       submitReview(q);
     }
   };
 
   const movePrankBtn = () => {
-    const randomX = Math.floor(Math.random() * 140) - 70; // geser kiri kanan
-    const randomY = Math.floor(Math.random() * 80) - 40;  // geser atas bawah
+    const randomX = Math.floor(Math.random() * 140) - 70;
+    const randomY = Math.floor(Math.random() * 80) - 40; 
     setPrankPos({ top: randomY, left: randomX });
   };
 
@@ -238,12 +282,11 @@ export default function HafalIn() {
       reviewCount: revItem.reviewCount + 1
     }).eq('id', revItem.id);
     
-    updateStreakAndHeatmap();
+    await updateStreakAndHeatmap();
     await loadAll();
     setRevItem(null); setTab("hafalan");
   };
 
-  // Logika Fitur Gacha
   const playGacha = () => {
     if (isSpinning || totalReviews < 15) return;
     setIsSpinning(true);
@@ -254,7 +297,7 @@ export default function HafalIn() {
     const spinInterval = setInterval(() => {
       setGachaResult(items[Math.floor(Math.random() * items.length)]);
       spins++;
-      if (spins >= 15) { // Berhenti muter setelah 15x
+      if (spins >= 15) {
         clearInterval(spinInterval);
         setIsSpinning(false);
       }
@@ -296,18 +339,33 @@ export default function HafalIn() {
     setAudioLoading(false);
   };
 
+  // FITUR 1: Pelukan Digital (Smart Mood-Ayat Matcher)
   const addJournal = async () => {
     if (!jNotes.trim()) return;
     await supabase.from('journals').insert([{
       date: new Date().toISOString(), mood: jMood, notes: jNotes, replies: []
     }]);
     await loadAll();
+    
+    // Cek mood jelek buat munculin ayat penyemangat
+    if (jMood === "😔" || jMood === "🥱" || jMood === "😐") {
+      const ayatList = [
+        "« لَا يُكَلِّفُ ٱللَّهُ نَفْسًا إِلَّا وُسْعَهَا »\nAllah tidak membebani seseorang melainkan sesuai dengan kesanggupannya. (Al-Baqarah: 286)\n\nCapek itu wajar kok, istirahat dulu ya. Kamu udah hebat hari ini ❤️",
+        "« فَإِنَّ مَعَ ٱلْعُسْرِ يُسْرًا »\nKarena sesungguhnya sesudah kesulitan itu ada kemudahan. (Al-Insyirah: 5)\n\nJangan sedih berlarut ya, badainya pasti berlalu. Semangat terus! 🤗",
+        "« وَلَسَوْفَ يُعْطِيكَ رَبُّكَ فَتَرْضَىٰ »\nDan kelak Tuhanmu pasti memberikan karunia-Nya kepadamu, lalu (hati) kamu menjadi puas. (Ad-Duha: 5)\n\nSenyum lagi dong, masa depanmu secerah senyummu ✨"
+      ];
+      const randomAyat = ayatList[Math.floor(Math.random() * ayatList.length)];
+      setSurprise(randomAyat);
+      setSprVis(true);
+      setTimeout(() => setSprVis(false), 9000); // Tampil 9 detik biar puas bacanya
+    }
+
     setJNotes(""); setJMood("😊"); setShowJForm(false);
   };
 
   const addReply = async (jid: string, currentReplies: any[]) => {
     if (!replyTxt.trim()) return;
-    const nxtReplies = [...(currentReplies || []), { id: uid(), author: "Nopal", text: replyTxt, ts: new Date().toISOString() }];
+    const nxtReplies = [...(currentReplies || []), { id: uid(), author: "Ayang", text: replyTxt, ts: new Date().toISOString() }];
     await supabase.from('journals').update({ replies: nxtReplies }).eq('id', jid);
     await loadAll();
     setReplyTxt("");
@@ -318,13 +376,51 @@ export default function HafalIn() {
   };
 
   const REWARDS = [
-    { id: 1, type: "review", req: 5, img: "💌", title: "Surat Kecil 1", msg: "Bangga banget kamu udah mulai rutin review! Keep going bub." },
+    { id: 1, type: "review", req: 5, img: "💌", title: "Surat Kecil 1", msg: "Bangga banget kamu udah mulai rutin review! Keep going sayang." },
     { id: 2, type: "streak", req: 3, img: "📸", title: "Foto Estetik", msg: "Inget foto ini nggak? Harus senyum terus ya ngafalnya!" },
     { id: 3, type: "review", req: 20, img: "💖", title: "Surat Kecil 2", msg: "Masya Allah, hafalan kamu udah makin banyak! Aku selalu dukung kamu." },
     { id: 4, type: "streak", req: 7, img: "🎁", title: "Hadiah Spesial", msg: "Streak 1 Minggu! Kasih tau aku ya, kamu mau jajan apa hari ini? Aku traktir!" },
   ];
 
   if (!isMounted) return <div style={{ minHeight: "100vh", background: "#FDF6F0" }} />;
+
+  // ── RENDER LAYAR TILANG (LOCK SCREEN) JIKA isLocked = TRUE ──────────
+  if (isLocked) {
+    return (
+      <div style={{minHeight:"100vh", background:"linear-gradient(135deg, #FDF6F0 0%, #F5E8F2 100%)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 24px", color:T, fontFamily:"'Inter',sans-serif", textAlign:"center"}}>
+        <div style={{background:"#fff", padding:"40px 24px", borderRadius:"32px", boxShadow:"0 20px 40px rgba(201,122,181,.15)", width:"100%", maxWidth:"340px", animation:"fadeUp 0.5s ease"}}>
+          <div style={{fontSize:"60px", marginBottom:"16px", animation:"pulse 2s infinite"}}>🚨</div>
+          <h1 style={{fontFamily:"'Playfair Display',serif", fontSize:"26px", fontWeight:700, color:"#B03030", margin:"0 0 12px"}}>Surat Tilang Kangen</h1>
+          <p style={{fontSize:"14px", color:T, lineHeight:1.6, marginBottom:"24px"}}>
+            Hafalan kosong 3 hari berturut-turut. Sistem dikunci otomatis karena Ustad/Ayang kangen berat nih!
+          </p>
+          
+          <input 
+            type="password" 
+            placeholder="Masukkan Password Rahasia" 
+            value={tilangPass}
+            onChange={(e) => setTilangPass(e.target.value)}
+            style={{...INP, textAlign:"center", padding:"14px", marginBottom:"16px", background:"#FDFCFE", border:"2px solid #EBD5E5"}}
+          />
+          
+          <button onClick={unlockApp} style={{width:"100%", background:C, color:"#fff", border:"none", borderRadius:"14px", padding:"14px", fontWeight:700, fontSize:"14px", cursor:"pointer", marginBottom:"16px", boxShadow:"0 4px 14px rgba(201,122,181,.25)"}}>
+            Buka Gembok 🔓
+          </button>
+          
+          <div style={{fontSize:"12px", color:TM, marginBottom:"12px"}}>Gak tau passwordnya?</div>
+          
+          <button onClick={() => {
+            const waNumber = "6285336152654"; 
+            const text = encodeURIComponent("Assalamualaikum Ustad/Ayang! Maaf ya aku bolos ngafal 3 hari 🥺 Minta password buat buka aplikasinya dong hehe...");
+            window.open(`https://wa.me/${waNumber}?text=${text}`, "_blank");
+          }} 
+          style={{width:"100%",background:"#FDFCFE",border:`1.5px dashed ${C}`,borderRadius:"14px",padding:"12px",color:C,fontSize:"13px",fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}}>
+            <Phone size={16}/> Telepon Komandan
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const due = hafalan.filter(h => isOverdue(h.nextReview));
   const filtSurahs = surahs.filter(s =>
@@ -335,6 +431,12 @@ export default function HafalIn() {
   return (
     <div style={{fontFamily:"'Inter',sans-serif",background:"#FDF6F0",minHeight:"100vh",maxWidth:"430px",margin:"0 auto",color:T,paddingBottom:"76px",position:"relative"}}>
       
+      {/* ── MODAL PELUKAN DIGITAL (MOOD/SURPRISE) ────────────────────────── */}
+      {sprVis && <div style={{position:"fixed",top:"18px",left:"50%",transform:"translateX(-50%)",zIndex:1000,background:"#fff",borderRadius:"16px",padding:"16px 20px",boxShadow:"0 8px 28px rgba(201,122,181,.3)",border:"1px solid #F0E2F5",maxWidth:"340px",width:"90%",textAlign:"center",animation:"slideDown .3s ease"}}>
+        <div style={{fontSize:"11px",color:C,fontWeight:800,letterSpacing:"1px",marginBottom:"8px",textTransform:"uppercase"}}>Pesan Untukmu 🌸</div>
+        <div style={{fontSize:"14px",color:T,lineHeight:1.6, whiteSpace:"pre-wrap"}}>{surprise}</div>
+      </div>}
+
       {/* ── MODAL PRANK JAILIN AYANG ────────────────────────────────────────── */}
       {showPrank && (
         <div className="modal-bg" style={{ zIndex: 1000, alignItems: "center" }}>
@@ -342,7 +444,7 @@ export default function HafalIn() {
             <div style={{fontSize:"50px", marginBottom:"10px", lineHeight:1}}>💸</div>
             <h3 style={{fontFamily:"'Playfair Display',serif", fontSize:"22px", fontWeight:700, color:T, margin:"0 0 8px"}}>Waduh Lupa Total!</h3>
             <p style={{fontSize:"13px", color:TM, marginBottom:"24px", lineHeight:1.5}}>
-              Karena kamu lupa total hafalannya, hukumannya kamu utang <b>traktir Nopal seblak</b>. Setuju kan?
+              Karena kamu lupa total hafalannya, hukumannya kamu utang <b>traktir Ayang seblak</b>. Setuju kan?
             </p>
             
             <div style={{display:"flex", gap:"12px", justifyContent:"center", position:"relative", height:"44px"}}>
