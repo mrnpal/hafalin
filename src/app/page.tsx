@@ -570,7 +570,7 @@ export default function HafalIn() {
           </div>
 
           <div style={{textAlign:"center",marginTop:"20px",fontSize:"12px",color:"#9B8FAD"}}>
-            Made with ❤️ untuk para penghafal Quran
+            Copyright © 2026 sinopal. All rights reserved.
           </div>
         </div>
       </div>
